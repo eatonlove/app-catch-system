@@ -13,6 +13,8 @@ from .catalog import CATALOG, context_for
 from .core import digest
 from .llm import research
 from .prompts import DIRECTIONS, VERSION, snapshot
+from .research_scope import choose_evidence, overview
+from typing import Optional
 
 plans=Table('ac_plans',metadata,Column('id',String,primary_key=True),Column('name',String),Column('catalog_id',String),Column('enabled',Integer),Column('last_day',String))
 analyses=Table('ac_analyses',metadata,Column('id',String,primary_key=True),Column('state',String),Column('requested_at',Float),Column('started_at',Float),Column('use_model',Integer),Column('result',JSON),Column('error',String),Column('filters',JSON))
@@ -28,6 +30,8 @@ class AnalysisInput(BaseModel):
     store:str=''
     direction:str='comprehensive'
     guidance:str=Field(default='',max_length=6000)
+    source_ids:Optional[list[str]]=Field(default=None,max_length=500)
+    evidence_limit:int=Field(default=30,ge=1,le=30)
 class FeedbackInput(BaseModel):
     decision:str=Field(pattern='^(watch|validate|reject|develop)$')
     qualification:str=Field(pattern='^(UNREVIEWED|REQUIRES_LICENSE|EXCLUDED|REVIEWED_ELIGIBLE)$')
@@ -37,11 +41,13 @@ class FeedbackInput(BaseModel):
 
 
 def build_report(bundles, filters=None):
-    filters=filters or {}; history={}; evidence=[]
+    filters=filters or {}; history={}; evidence=[]; sources=[]
     for run_id,b in bundles:
+        if filters.get('source_ids') is not None and run_id not in filters['source_ids']:continue
         c=b['context']
         if any(filters.get(k) and filters[k]!=c[k] for k in ('country','store')):continue
         if b['status']!='SUCCEEDED':continue
+        sources.append({'id':run_id,'context':c,'row_count':len(b['rows']),'status':b['status'],'collected_at':b['collected_at']})
         for row in b['rows']:
             key=digest({'listing':row['listing_key'],'scope':{k:v for k,v in c.items() if k!='data_date'}})
             day=c['data_date']; bucket=history.setdefault(key,{})
@@ -69,13 +75,15 @@ def build_report(bundles, filters=None):
             'developer':row.get('developer'),'qualification':'UNREVIEWED',
             'unknowns':['收入、付费用户数未由排名推导','跨市场需求与替代品需验证','具体功能资质待人工核验']})
         evidence.append({'id':ev,'text':json.dumps({'name':name,'context':c,'rank':current,'windows':windows,'developer':row.get('developer'),'observed_days':len(days),'raw_columns':raw},ensure_ascii=False)[:2000]})
-    candidates.sort(key=lambda x:(-(x['windows']['7']['rank_improvement'] or 0),-x['observed_days'],x['rank'] or 999999))
+    candidates.sort(key=lambda x:(-(x['windows']['7']['rank_improvement'] or 0),-x['observed_days'],x['rank'] or 999999,x['key']))
     evidence_by_id={item['id']:item for item in evidence}
     selected=candidates[:200]
     selected_ids=list(dict.fromkeys(ref for item in selected for ref in item['evidence_ids']))
-    return {'kind':'research_priority_not_profit_prediction','generated_at':time.time(),'candidates':selected,
+    report={'kind':'research_priority_not_profit_prediction','generated_at':time.time(),'candidates':selected,
             'total_candidates':len(candidates),'evidence':[evidence_by_id[ref] for ref in selected_ids],
-            'empty':not candidates,'warnings':['排序依据7日名次改善、观察天数、当前名次；不是收入机会分','仅比较同国家、渠道、类别和榜单；榜外未知不补零','界面最多返回前200项；模型只研究前15项证据']}
+            'empty':not candidates,'warnings':['排序依据7日名次改善、观察天数、当前名次；不是收入机会分','仅比较同国家、渠道、类别和榜单；榜外未知不补零','展示最多200项；实际AI输入请查看本报告的数据来源清单']}
+    report['source_overview']=overview(report,[],sources)
+    return report
 
 
 def tick(queue, model_fn=research):
@@ -103,17 +111,8 @@ def tick(queue, model_fn=research):
                 count=c.scalar(select(func.count()).select_from(analyses).where(analyses.c.use_model==1,analyses.c.started_at>=midnight))
             if count>limit:raise ValueError('DAILY_CALL_BUDGET_EXCEEDED')
             prompt=(row['filters'] or {}).get('prompt_snapshot') or snapshot()
-            # Cross-market research samples each observed scope instead of only the largest market.
-            selected=report['evidence'][:15]
-            if prompt['id']=='cross-market':
-                groups={}; lookup={e['id']:e for e in report['evidence']}
-                for item in report['candidates']:
-                    scope=(item['context']['country'],item['context']['store'])
-                    groups.setdefault(scope,[]).append(lookup[item['evidence_ids'][0]])
-                selected=[]
-                while any(groups.values()) and len(selected)<15:
-                    for group in groups.values():
-                        if group and len(selected)<15:selected.append(group.pop(0))
+            selected=choose_evidence(report,(row['filters'] or {}).get('evidence_limit',15))
+            report['source_overview']=overview(report,selected,report['source_overview']['sources'])
             report['prompt_snapshot']=prompt
             report['model_evidence_ids']=[e['id'] for e in selected]
             report['model']=model_fn(selected,os.environ['AC_LLM_ENDPOINT'],os.environ['AC_LLM_MODEL'],os.environ['AC_LLM_API_KEY'],os.getenv('AC_MODEL_CACHE','data/model-cache'),system_prompt=prompt['system_prompt'])
@@ -126,6 +125,24 @@ def tick(queue, model_fn=research):
 
 def register(app,queue,admin):
     metadata.create_all(queue.engine)
+    def source_rows():
+        with queue.engine.connect() as c:
+            return list(c.execute(select(jobs.c.id,jobs.c.state,jobs.c.payload,results.c.bundle).select_from(jobs.outerjoin(results,jobs.c.id==results.c.job_id)).order_by(jobs.c.created_at.desc())).mappings())
+    def prepare(value):
+        rows=source_rows()
+        allowed={r['id'] for r in rows if r['state']=='SUCCEEDED' and r['bundle'] and all(not getattr(value,k) or getattr(value,k)==r['payload']['context'][k] for k in ('country','store'))}
+        ids=list(dict.fromkeys(value.source_ids)) if value.source_ids is not None else sorted(allowed)
+        if set(ids)-allowed:raise HTTPException(422,'所选批次不存在、未完整采集或与地区筛选不一致')
+        filters={'country':value.country,'store':value.store,'source_ids':ids,'evidence_limit':value.evidence_limit}
+        report=build_report([(r['id'],r['bundle']) for r in rows if r['id'] in ids],filters)
+        selected=choose_evidence(report,value.evidence_limit) if value.use_model else []
+        return filters,overview(report,selected,report['source_overview']['sources'])
+    @app.get('/api/research-sources',dependencies=[Depends(admin)])
+    def research_sources():return [{'id':r['id'],'context':r['payload']['context'],'status':r['state'],'row_count':len(r['bundle']['rows']) if r['bundle'] else 0,'eligible':r['state']=='SUCCEEDED' and bool(r['bundle']),'reason':'' if r['state']=='SUCCEEDED' else '采集未完整完成，不纳入研究'} for r in source_rows()]
+    @app.post('/api/research-preview',dependencies=[Depends(admin)])
+    def preview(value:AnalysisInput):
+        filters,scope=prepare(value)
+        return dict(scope,source_ids=filters['source_ids'])
     @app.get('/api/research-directions',dependencies=[Depends(admin)])
     def directions():return [dict(d,version=VERSION,full_prompt=snapshot(d['id'])['system_prompt']) for d in DIRECTIONS]
     @app.get('/api/catalog',dependencies=[Depends(admin)])
@@ -157,8 +174,11 @@ def register(app,queue,admin):
         try:prompt=snapshot(value.direction,value.guidance)
         except ValueError:raise HTTPException(422,'UNKNOWN_RESEARCH_DIRECTION')
         if value.use_model and not all(os.getenv(k) for k in ['AC_LLM_ENDPOINT','AC_LLM_MODEL','AC_LLM_API_KEY']):raise HTTPException(409,'MODEL_CONFIG_REQUIRED')
+        filters,scope=prepare(value)
+        if value.source_ids is not None and not filters['source_ids']:raise HTTPException(422,'请至少选择一个已完整采集的批次')
+        filters.update(direction=value.direction,prompt_snapshot=prompt if value.use_model else None,source_preview=scope)
         identity=str(uuid.uuid4())
-        with queue.engine.begin() as c:c.execute(analyses.insert().values(id=identity,state='PENDING',requested_at=time.time(),use_model=int(value.use_model),filters={'country':value.country,'store':value.store,'direction':value.direction,'prompt_snapshot':prompt if value.use_model else None}))
+        with queue.engine.begin() as c:c.execute(analyses.insert().values(id=identity,state='PENDING',requested_at=time.time(),use_model=int(value.use_model),filters=filters))
         return {'id':identity}
     @app.get('/api/analyses',dependencies=[Depends(admin)])
     def analysis_list():
@@ -167,7 +187,12 @@ def register(app,queue,admin):
     def report(identity:str):
         with queue.engine.connect() as c:row=c.execute(select(analyses).where(analyses.c.id==identity)).mappings().first()
         if not row:raise HTTPException(404,'NOT_FOUND')
-        return dict(row)
+        item=dict(row)
+        if item.get('result') and 'source_overview' not in item['result']:
+            result=dict(item['result']);ids=result.get('model_evidence_ids')
+            selected=None if ids is None else [e for e in result.get('evidence',[]) if e['id'] in ids]
+            result['source_overview']=overview(result,selected);item['result']=result
+        return item
     @app.get('/api/feedback',dependencies=[Depends(admin)])
     def notes():
         with queue.engine.connect() as c:return {r['key']:r['value'] for r in c.execute(select(feedback)).mappings()}

@@ -16,3 +16,9 @@ GET /api/feedback返回key→value；PUT /api/feedback/{key} {decision,qualifica
 `GET /api/research-directions` 返回 `{id,title,description,prompt,version}` 数组。创建研究新增 `direction`（默认 comprehensive）、`guidance`（最多6000字符，可来自本地UTF-8 txt/md）字段。选择、补充提示词及实际完整 system prompt 在创建时快照保存于现有 filters JSON，不新增数据库列；后续模板变更不改变已排队任务。列表返回 filters 便于显示方向。报告返回 prompt_snapshot、实际模型证据ID、输入覆盖说明；旧报告继续可读。
 
 模型结果仍使用既有 candidates/task/hypothesis/evidence_ids/unknowns 契约；不同方向改变研究任务与报告内容，不改变证据真实性约束。无模型报告不调用或保存为已执行AI提示词。前端无mock。
+
+## v3：研究数据范围与可用性预览
+
+GET /api/research-sources 返回采集批次列表（id/context/status/row_count/eligible/排除原因）。POST /api/research-preview 接收研究输入，返回不调用模型的数据覆盖、缺口、将送入模型的应用清单和source_ids。创建研究新增source_ids（可省略表示提交时匹配的全部完整批次；显式空数组拒绝）和evidence_limit（1—30，默认30）。创建时冻结批次ID，后续完成的采集不会悄悄进入已排队报告。国家筛选与勾选范围必须一致。旧客户端省略source_ids仍兼容。
+
+报告保存source_overview：具体批次、记录数、覆盖日期、可比时间窗口、真实模型输入清单、抽样规则及缺口。旧报告以其已存证据重建来源视图，标记重建；缺少模型输入清单则显示未知，不倒推。新模型输出新增summary/data_gaps/next_steps，旧candidates契约继续可读。
