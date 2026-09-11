@@ -12,6 +12,7 @@ from .cloud import metadata, jobs, results, nodes
 from .catalog import CATALOG, context_for
 from .core import digest
 from .llm import research
+from .prompts import DIRECTIONS, VERSION, snapshot
 
 plans=Table('ac_plans',metadata,Column('id',String,primary_key=True),Column('name',String),Column('catalog_id',String),Column('enabled',Integer),Column('last_day',String))
 analyses=Table('ac_analyses',metadata,Column('id',String,primary_key=True),Column('state',String),Column('requested_at',Float),Column('started_at',Float),Column('use_model',Integer),Column('result',JSON),Column('error',String),Column('filters',JSON))
@@ -25,6 +26,8 @@ class AnalysisInput(BaseModel):
     use_model:bool=False
     country:str=''
     store:str=''
+    direction:str='comprehensive'
+    guidance:str=Field(default='',max_length=6000)
 class FeedbackInput(BaseModel):
     decision:str=Field(pattern='^(watch|validate|reject|develop)$')
     qualification:str=Field(pattern='^(UNREVIEWED|REQUIRES_LICENSE|EXCLUDED|REVIEWED_ELIGIBLE)$')
@@ -65,7 +68,7 @@ def build_report(bundles, filters=None):
             'observed_days':len(days),'evidence_ids':[ev],'source_url':row.get('detail_url',b['source_url']),
             'developer':row.get('developer'),'qualification':'UNREVIEWED',
             'unknowns':['收入、付费用户数未由排名推导','跨市场需求与替代品需验证','具体功能资质待人工核验']})
-        evidence.append({'id':ev,'text':json.dumps({'name':name,'context':c,'rank':current,'observed_days':len(days),'raw_columns':raw},ensure_ascii=False)[:2000]})
+        evidence.append({'id':ev,'text':json.dumps({'name':name,'context':c,'rank':current,'windows':windows,'developer':row.get('developer'),'observed_days':len(days),'raw_columns':raw},ensure_ascii=False)[:2000]})
     candidates.sort(key=lambda x:(-(x['windows']['7']['rank_improvement'] or 0),-x['observed_days'],x['rank'] or 999999))
     evidence_by_id={item['id']:item for item in evidence}
     selected=candidates[:200]
@@ -99,7 +102,21 @@ def tick(queue, model_fn=research):
             with queue.engine.connect() as c:
                 count=c.scalar(select(func.count()).select_from(analyses).where(analyses.c.use_model==1,analyses.c.started_at>=midnight))
             if count>limit:raise ValueError('DAILY_CALL_BUDGET_EXCEEDED')
-            report['model']=model_fn(report['evidence'][:15],os.environ['AC_LLM_ENDPOINT'],os.environ['AC_LLM_MODEL'],os.environ['AC_LLM_API_KEY'],os.getenv('AC_MODEL_CACHE','data/model-cache'))
+            prompt=(row['filters'] or {}).get('prompt_snapshot') or snapshot()
+            # Cross-market research samples each observed scope instead of only the largest market.
+            selected=report['evidence'][:15]
+            if prompt['id']=='cross-market':
+                groups={}; lookup={e['id']:e for e in report['evidence']}
+                for item in report['candidates']:
+                    scope=(item['context']['country'],item['context']['store'])
+                    groups.setdefault(scope,[]).append(lookup[item['evidence_ids'][0]])
+                selected=[]
+                while any(groups.values()) and len(selected)<15:
+                    for group in groups.values():
+                        if group and len(selected)<15:selected.append(group.pop(0))
+            report['prompt_snapshot']=prompt
+            report['model_evidence_ids']=[e['id'] for e in selected]
+            report['model']=model_fn(selected,os.environ['AC_LLM_ENDPOINT'],os.environ['AC_LLM_MODEL'],os.environ['AC_LLM_API_KEY'],os.getenv('AC_MODEL_CACHE','data/model-cache'),system_prompt=prompt['system_prompt'])
         with queue.engine.begin() as c:c.execute(update(analyses).where(analyses.c.id==row['id'],analyses.c.state=='RUNNING').values(state='SUCCEEDED',result=report))
     except Exception as e:
         import httpx
@@ -109,6 +126,8 @@ def tick(queue, model_fn=research):
 
 def register(app,queue,admin):
     metadata.create_all(queue.engine)
+    @app.get('/api/research-directions',dependencies=[Depends(admin)])
+    def directions():return [dict(d,version=VERSION,full_prompt=snapshot(d['id'])['system_prompt']) for d in DIRECTIONS]
     @app.get('/api/catalog',dependencies=[Depends(admin)])
     def catalog():return CATALOG
     @app.get('/api/status',dependencies=[Depends(admin)])
@@ -135,13 +154,15 @@ def register(app,queue,admin):
         return {'ok':True}
     @app.post('/api/analyses',dependencies=[Depends(admin)])
     def analyze(value:AnalysisInput):
+        try:prompt=snapshot(value.direction,value.guidance)
+        except ValueError:raise HTTPException(422,'UNKNOWN_RESEARCH_DIRECTION')
         if value.use_model and not all(os.getenv(k) for k in ['AC_LLM_ENDPOINT','AC_LLM_MODEL','AC_LLM_API_KEY']):raise HTTPException(409,'MODEL_CONFIG_REQUIRED')
         identity=str(uuid.uuid4())
-        with queue.engine.begin() as c:c.execute(analyses.insert().values(id=identity,state='PENDING',requested_at=time.time(),use_model=int(value.use_model),filters={'country':value.country,'store':value.store}))
+        with queue.engine.begin() as c:c.execute(analyses.insert().values(id=identity,state='PENDING',requested_at=time.time(),use_model=int(value.use_model),filters={'country':value.country,'store':value.store,'direction':value.direction,'prompt_snapshot':prompt if value.use_model else None}))
         return {'id':identity}
     @app.get('/api/analyses',dependencies=[Depends(admin)])
     def analysis_list():
-        with queue.engine.connect() as c:return [dict(r) for r in c.execute(select(analyses.c.id,analyses.c.state,analyses.c.requested_at,analyses.c.use_model,analyses.c.error).order_by(analyses.c.requested_at.desc()).limit(100)).mappings()]
+        with queue.engine.connect() as c:return [dict(r) for r in c.execute(select(analyses.c.id,analyses.c.state,analyses.c.requested_at,analyses.c.use_model,analyses.c.error,analyses.c.filters).order_by(analyses.c.requested_at.desc()).limit(100)).mappings()]
     @app.get('/api/analyses/{identity}',dependencies=[Depends(admin)])
     def report(identity:str):
         with queue.engine.connect() as c:row=c.execute(select(analyses).where(analyses.c.id==identity)).mappings().first()

@@ -1,27 +1,96 @@
 'use strict';
-const $=id=>document.getElementById(id);let catalog={},currentReport=null,notes={};
+const $=id=>document.getElementById(id);
+let catalog={},directions=[],currentReport=null,notes={},detailFinished=false,refreshing=false;
+const route=location.pathname.match(/^\/(collections|reports)\/([^/]+)$/);
+const stateLabel=s=>({PENDING:'排队中',RUNNING:'处理中',SUCCEEDED:'已完成',PARTIAL:'部分完成',FAILED:'失败',UNKNOWN:'结果待确认',CANCELLED:'已取消'}[s]||s);
 function el(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e}
 function notice(text){$('notice').textContent=text||''}
-async function api(path,method='GET',body){const r=await fetch(path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json','X-Requested-With':'appcatch'},body:body===undefined?undefined:JSON.stringify(body)});let data=await r.json();if(!r.ok){if(r.status===401)locked();throw new Error(typeof data.detail==='string'?data.detail:'请求参数不符合接口要求')}return data}
+async function api(path,method='GET',body){const r=await fetch(path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json','X-Requested-With':'appcatch'},body:body===undefined?undefined:JSON.stringify(body)});const data=await r.json();if(!r.ok){if(r.status===401)locked();throw new Error(typeof data.detail==='string'?data.detail:'请求参数不符合接口要求')}return data}
 function locked(){$('workspace').hidden=true;$('login').hidden=false;$('logout').hidden=true}
 function empty(root,text){root.replaceChildren(el('div',text,'empty'))}
 function table(root,headers,rows){const wrap=el('div',undefined,'table-wrap'),t=el('table'),head=el('tr');headers.forEach(x=>head.append(el('th',x)));t.append(head);rows.forEach(values=>{const tr=el('tr');values.forEach(x=>{const td=el('td');td.append(x instanceof Node?x:document.createTextNode(String(x??'未知')));tr.append(td)});t.append(tr)});wrap.append(t);root.replaceChildren(wrap)}
-function button(text,fn){const b=el('button',text);b.onclick=()=>Promise.resolve().then(fn).catch(e=>notice(e.message));return b}
-function date(t){return new Date(t*1000).toLocaleString()}
-async function refresh(){const [s,j,p,r,n]=await Promise.all(['/api/status','/api/jobs','/api/plans','/api/analyses','/api/feedback'].map(x=>api(x)));notes=n;$('stats').replaceChildren();[[s.nodes.some(n=>Date.now()/1000-n.last_seen<90)?'在线':'离线','Mac 采集节点'],[j.filter(x=>['RUNNING','PENDING'].includes(x.state)).length,'待处理 / 运行中'],[j.filter(x=>x.state==='SUCCEEDED').length,'最近成功任务']].forEach(([v,k])=>{let d=el('div',undefined,'stat');d.append(el('span',k),el('strong',v));$('stats').append(d)});
-if(j.length)table($('jobs'),['入口 / 日期','状态','尝试','操作'],j.map(x=>[x.payload.recipe+' · '+x.payload.context.data_date,x.state+(x.error_code?' / '+x.error_code:''),x.attempts,['PENDING','RUNNING'].includes(x.state)?button('取消',async()=>{await api('/api/jobs/'+x.id+'/cancel','POST');await refresh()}):['SUCCEEDED','PARTIAL'].includes(x.state)?button('下载数据',async()=>download(await api('/api/jobs/'+x.id+'/result'),'collection.json')):'—']));else empty($('jobs'),'还没有采集任务。先在「采集计划」选择一个入口。');
-if(p.length)table($('plans'),['每日计划','状态','操作'],p.map(x=>[x.name,x.enabled?'启用':'暂停',button(x.enabled?'暂停':'启用',async()=>{await api('/api/plans/'+x.id+'/toggle','POST');refresh()})]));else empty($('plans'),'暂无每日计划');
-if(r.length)table($('reports'),['研究时间','方式','状态','查看'],r.map(x=>[date(x.requested_at),x.use_model?'大模型研究':'榜单趋势',x.state+(x.error?' / '+x.error:''),x.state==='SUCCEEDED'?button('打开报告',()=>openReport(x.id)):'—']));else empty($('reports'),'报告将在采集完成并发起分析后出现');
-$('configuration').replaceChildren(el('h2','模型：'+s.model),el('p',s.model_configured?'模型配置完整；选择大模型研究将调用第三方 API。':'未配置模型；仍可使用榜单趋势分析。'),el('p','每日最多 '+s.daily_call_limit+' 次模型任务；每次输入最多15条证据、输出最多3000 tokens。金额取决于供应商价格。'),el('p','采集数据权限由点点账号决定。精确收入受限时不会补造数值。'))}
-async function openReport(id){currentReport=await api('/api/analyses/'+id);const out=$('report'),r=currentReport.result;out.replaceChildren(el('h2','研究候选'),button('导出完整报告',()=>download(currentReport,'opportunity-report.json')));r.warnings.forEach(x=>out.append(el('p',x)));if(!r.candidates.length){out.append(el('div','暂无足够的已完成采集数据。','empty'));return}r.candidates.forEach(c=>{let d=el('article',undefined,'card'),meta=el('div',undefined,'meta');meta.append(el('span',c.context.country+' / '+c.context.store+' / '+c.context.category),el('span','当前排名 '+(c.rank??'未知')+' · 已观察 '+c.observed_days+' 天'));d.append(meta,el('h3',c.name),el('span',c.task,'tag'),el('p','7日名次改善：'+(c.windows['7'].rank_improvement??'历史不足')+'；28日：'+(c.windows['28'].rank_improvement??'历史不足')+'；90日：'+(c.windows['90'].rank_improvement??'历史不足')),el('p',c.unknowns.join('；')));let a=el('a','查看原始来源');a.href=c.source_url;a.target='_blank';a.rel='noopener noreferrer';d.append(a,el('p','审核状态：'+(notes[c.key]?.qualification||'UNREVIEWED')),button('审核 / 记录实验',()=>review(c)));out.append(d)});if(r.model){out.append(el('h2','模型提出的任务假设'));r.model.result.candidates.forEach(c=>{let d=el('article',undefined,'card');d.append(el('h3',c.task),el('p',c.hypothesis),el('p','证据：'+c.evidence_ids.join('、')),el('p','待验证：'+c.unknowns.join('；')));out.append(d)})}}
-function review(c){const n=notes[c.key]||{};$('review-key').value=c.key;$('decision').value=n.decision||'watch';$('qualification').value=n.qualification||'UNREVIEWED';$('note').value=n.note||'';$('experiment').value=n.experiment||'';$('evidence-refs').value=(n.evidence_refs||[]).join('\n');$('review').showModal()}
+function button(text,fn){const b=el('button',text);b.type='button';b.onclick=()=>Promise.resolve().then(fn).catch(e=>notice(e.message));return b}
+function link(text,url,newTab=false){const a=el('a',text,'action-link');a.href=url;if(newTab){a.target='_blank';a.rel='noopener noreferrer'}return a}
+function actions(...items){const d=el('div',undefined,'actions');d.append(...items);return d}
+function date(t){return new Date(typeof t==='number'?t*1000:t).toLocaleString()}
+function scope(c){return [c.country,c.store,c.category,c.chart,c.data_date].filter(Boolean).join(' / ')}
+function showPage(id,title){document.querySelectorAll('.page').forEach(p=>p.hidden=p.id!==id);$('breadcrumb').textContent=title}
 function download(value,name){const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'})),a=el('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
-async function enter(){catalog=await api('/api/catalog');$('catalog').replaceChildren();Object.keys(catalog).forEach(k=>{const s=catalog[k];const label=(s.country==='US'?'美国':'中国')+' · '+({appstore:'App Store',googleplay:'Google Play',huawei:'华为',harmony:'鸿蒙'}[s.store])+' · '+s.category+' · '+(s.chart==='grossing'?'畅销榜':'应用榜');const o=el('option',label);o.value=k;$('catalog').append(o)});$('login').hidden=true;$('workspace').hidden=false;$('logout').hidden=false;await refresh()}
-$('login-form').onsubmit=async e=>{e.preventDefault();try{await api('/auth/login','POST',{password:$('password').value});$('password').value='';notice('');await enter()}catch(e){notice(e.message)}};
-$('logout').onclick=async()=>{await api('/auth/logout','POST');locked()};
-document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.page').forEach(p=>p.hidden=p.id!==b.dataset.page);document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('selected',x===b));$('breadcrumb').textContent=b.textContent});
-$('day').value=new Date(Date.now()-86400000).toISOString().slice(0,10);
-$('collect-form').onsubmit=async e=>{e.preventDefault();try{const name=$('catalog').value;if(e.submitter.value==='plan')await api('/api/plans','POST',{name,catalog_id:name,enabled:true});else{const spec=catalog[name],context={};['market','country','store','device','category','chart'].forEach(k=>context[k]=spec[k]);context.data_date=$('day').value;await api('/api/jobs','POST',{request_key:crypto.randomUUID(),recipe:name,context})}notice('已保存，Mac 节点上线后会领取任务。');await refresh()}catch(e){notice(e.message)}};
-$('research-form').onsubmit=async e=>{e.preventDefault();try{await api('/api/analyses','POST',{use_model:$('use-model').value==='1',country:$('country').value,store:''});notice('研究任务已排队。');await refresh()}catch(e){notice(e.message)}};
-$('review-form').onsubmit=async e=>{e.preventDefault();try{await api('/api/feedback/'+$('review-key').value,'PUT',{decision:$('decision').value,qualification:$('qualification').value,note:$('note').value,experiment:$('experiment').value,evidence_refs:$('evidence-refs').value.split('\n').map(x=>x.trim()).filter(Boolean)});$('review').close();await refresh();if(currentReport)await openReport(currentReport.id);notice('审核记录已保存。')}catch(e){notice(e.message)}};
-$('close-review').onclick=()=>$('review').close();enter().catch(()=>locked());setInterval(()=>{if(!$('workspace').hidden)refresh().catch(e=>notice(e.message))},10000);
+async function refresh(){
+ if(refreshing)return;refreshing=true;
+ try{
+  if(route){if(!detailFinished)await renderDetail();return}
+  const [s,j,p,r,n]=await Promise.all(['/api/status','/api/jobs','/api/plans','/api/analyses','/api/feedback'].map(x=>api(x)));notes=n;
+  $('stats').replaceChildren();[[s.nodes.some(n=>Date.now()/1000-n.last_seen<90)?'在线':'离线','Mac 采集节点'],[j.filter(x=>['RUNNING','PENDING'].includes(x.state)).length,'待处理 / 运行中'],[j.filter(x=>x.state==='SUCCEEDED').length,'最近成功任务']].forEach(([v,k])=>{const d=el('div',undefined,'stat');d.append(el('span',k),el('strong',v));$('stats').append(d)});
+  if(j.length)table($('jobs'),['入口 / 日期','状态','尝试','操作'],j.map(x=>[x.payload.recipe+' · '+x.payload.context.data_date,stateLabel(x.state)+(x.error_code?' / '+x.error_code:''),x.attempts,actions(link('查看数据','/collections/'+x.id),...(['PENDING','RUNNING'].includes(x.state)?[button('取消',async()=>{await api('/api/jobs/'+x.id+'/cancel','POST');await refreshLater()})]:[]))]));else empty($('jobs'),'还没有采集任务。先在「采集计划」选择一个入口。');
+  if(p.length)table($('plans'),['每日计划','状态','操作'],p.map(x=>[x.name,x.enabled?'启用':'暂停',button(x.enabled?'暂停':'启用',async()=>{await api('/api/plans/'+x.id+'/toggle','POST');await refreshLater()})]));else empty($('plans'),'暂无每日计划');
+  if(r.length)table($('reports'),['研究时间','分析方向','状态','报告'],r.map(x=>[date(x.requested_at),x.use_model?(x.filters?.prompt_snapshot?.title||'综合选品'):'榜单趋势',stateLabel(x.state)+(x.error?' / '+x.error:''),link('新页面查看','/reports/'+x.id,true)]));else empty($('reports'),'采集完成后，选择方向生成第一份研究报告。');
+  $('configuration').replaceChildren(el('h2','模型：'+s.model),el('p',s.model_configured?'模型配置完整；选择AI研究将调用第三方 API。':'未配置模型；仍可使用榜单趋势分析。'),el('p','每日最多 '+s.daily_call_limit+' 次模型任务；每份报告会说明实际输入的证据范围。'),el('p','精确收入受账号权限限制时不会补造数值。'));
+ }finally{refreshing=false}
+}
+async function refreshLater(){refreshing=false;await refresh()}
+function promptPreview(){const d=directions.find(x=>x.id===$('direction').value);if(!d)return;$('direction-description').textContent=d.description;$('prompt-preview').textContent=d.full_prompt;$('prompt-controls').hidden=$('use-model').value!=='1';$('direction').disabled=$('use-model').value!=='1'}
+async function renderDetail(){
+ showPage('detail-page',route[1]==='collections'?'采集数据详情':'完整研究报告');
+ if(route[1]==='collections')await collectionDetail(route[2]);else await reportDetail(route[2]);
+}
+async function collectionDetail(id){
+ const job=await api('/api/jobs/'+encodeURIComponent(id)),out=$('detail-content');
+ out.replaceChildren(link('← 返回工作台','/'),el('h1','采集数据详情'),el('p',scope(job.payload.context)),el('p','状态：'+stateLabel(job.state)+' · 尝试 '+job.attempts+' 次'+(job.error_code?' · '+job.error_code:'')));
+ if(!['SUCCEEDED','PARTIAL'].includes(job.state)){out.append(el('div',['PENDING','RUNNING'].includes(job.state)?'等待采集完成，页面每5秒自动更新。':'本任务没有可查看的数据。','report-status'));detailFinished=!['PENDING','RUNNING'].includes(job.state);return}
+ const b=await api('/api/jobs/'+encodeURIComponent(id)+'/result');detailFinished=true;
+ out.append(el('p','共 '+b.rows.length+' 条 · 采集时间 '+date(b.collected_at)),actions(button('下载完整 JSON',()=>download(b,'collection-'+id+'.json')),link('打开点点原始榜单',b.source_url,true)));
+ if(b.status==='PARTIAL')out.append(el('p','这是部分采集结果，不参与完整榜单机会研究。'));
+ const search=el('input');search.className='data-search';search.placeholder='搜索应用名称或开发者';search.setAttribute('aria-label','搜索采集应用');out.append(search);const count=el('p'),grid=el('div');out.append(count,grid);
+ const metric=(r,n)=>{const m=r.metrics.find(x=>x.name===n);return m?.value??'未知'};
+ const draw=()=>{const q=search.value.trim().toLowerCase(),rows=b.rows.filter(r=>(r.name+' '+(r.developer||'')).toLowerCase().includes(q));count.textContent='显示 '+rows.length+' / '+b.rows.length+' 条';if(!rows.length){empty(grid,'没有匹配的应用。');return}table(grid,['排名','应用','开发者','评分','评分数','详情'],rows.map(r=>[metric(r,'rank'),button(r.name,()=>appDetail(r,b)),r.developer||'未知',metric(r,'rating'),metric(r,'rating_count'),button('查看字段',()=>appDetail(r,b))]))};search.oninput=draw;draw();
+}
+function appDetail(row,b){
+ const root=$('app-detail-content');root.replaceChildren(el('h2',row.name),el('p',scope(b.context)));
+ const list=el('dl');const fields={'开发者':row.developer||'未知','采集时间':date(b.collected_at),'应用标识':row.listing_key,...(row.raw_columns||{})};
+ for(const [k,v] of Object.entries(fields)){list.append(el('dt',k),el('dd',typeof v==='object'?JSON.stringify(v):String(v??'未知')))}
+ root.append(list,link('查看点点应用详情',row.detail_url||b.source_url,true));const raw=el('details');raw.append(el('summary','查看标准化指标'),el('pre',JSON.stringify(row.metrics,null,2)));root.append(raw);$('app-detail').showModal();
+}
+function disclosure(title,text){const d=el('details');d.append(el('summary',title),el('pre',text));return d}
+async function reportDetail(id){
+ currentReport=await api('/api/analyses/'+encodeURIComponent(id));const record=currentReport,out=$('detail-content'),prompt=record.result?.prompt_snapshot||record.filters?.prompt_snapshot;
+ document.title=(prompt?.title||'榜单趋势')+'报告 · 机会台';
+ out.replaceChildren(link('← 返回机会研究','/#research'),el('div','RESEARCH REPORT','eyebrow'),el('h1',(record.use_model?(prompt?.title||'AI机会研究'):'榜单趋势')+'报告','report-title'),el('p',date(record.requested_at)+' · '+stateLabel(record.state)+' · '+(record.filters?.country||'全部地区')));
+ if(record.state!=='SUCCEEDED'){
+  out.append(el('div',['PENDING','RUNNING'].includes(record.state)?'研究正在处理，页面每5秒更新。可关闭页面后从研究列表再次打开。':('研究未完成：'+(record.error||stateLabel(record.state))),'report-status'));
+  if(prompt)out.append(disclosure('本次提交的完整提示词',prompt.system_prompt));
+  detailFinished=!['PENDING','RUNNING'].includes(record.state);return;
+ }
+ detailFinished=true;notes=await api('/api/feedback');const r=record.result;
+ out.append(actions(button('导出完整报告 JSON',()=>download(record,'report-'+id+'.json')),button('打印 / 保存 PDF',()=>window.print())));
+ r.warnings.forEach(x=>out.append(el('p',x)));
+ if(r.model){out.append(el('h2','AI 研究结论'),el('p','模型 '+r.model.model+' · 实际输入 '+(r.model_evidence_ids?.length??'未知')+' 条证据 · '+(r.model.cached?'复用缓存':'本次生成')));
+  if(!r.model.result.candidates.length)out.append(el('div','当前证据不足以形成具体机会。请补充历史数据或其他市场样本后再研究。','empty'));
+  r.model.result.candidates.forEach((c,i)=>{const card=el('article',undefined,'card');card.append(el('h3',(i+1)+'. '+c.task),el('div',c.hypothesis,'prose'),el('h4','尚待验证'),el('p',c.unknowns.join('\n'),'prose'));const refs=el('div',undefined,'evidence-list');c.evidence_ids.forEach(ref=>{const a=el('a','证据 '+ref);a.href='#evidence-'+encodeURIComponent(ref);refs.append(a,el('br'))});card.append(refs);out.append(card)})
+ }else out.append(el('p','本报告是数据趋势分析，没有调用大模型。'));
+ if(prompt)out.append(disclosure('本次实际使用的提示词 · '+prompt.version,prompt.system_prompt));
+ out.append(el('h2','竞品与趋势依据'));
+ if(!r.candidates.length)out.append(el('div','暂无已完成的可比采集数据。','empty'));
+ r.candidates.forEach(c=>{const card=el('article',undefined,'card');card.append(el('div',scope(c.context),'meta'),el('h3',c.name),el('p','当前排名 '+(c.rank??'未知')+' · 已观察 '+c.observed_days+' 天'),el('p','7日名次改善：'+(c.windows['7'].rank_improvement??'历史不足')+'；28日：'+(c.windows['28'].rank_improvement??'历史不足')+'；90日：'+(c.windows['90'].rank_improvement??'历史不足')),el('p',c.unknowns.join('；')),actions(link('原始来源',c.source_url,true),button('审核 / 记录实验',()=>review(c))),el('p','审核状态：'+(notes[c.key]?.qualification||'UNREVIEWED')));out.append(card)});
+ out.append(el('h2','证据附录'));
+ (r.evidence||[]).forEach(e=>{const d=disclosure(e.id,e.text);d.id='evidence-'+e.id;const job=e.id.split(':')[0];d.append(link('查看本次采集数据','/collections/'+encodeURIComponent(job),true));out.append(d)});
+}
+function review(c){const n=notes[c.key]||{};$('review-key').value=c.key;$('decision').value=n.decision||'watch';$('qualification').value=n.qualification||'UNREVIEWED';$('note').value=n.note||'';$('experiment').value=n.experiment||'';$('evidence-refs').value=(n.evidence_refs||[]).join('\n');$('review').showModal()}
+async function enter(){
+ [catalog,directions]=await Promise.all([api('/api/catalog'),api('/api/research-directions')]);$('catalog').replaceChildren();Object.keys(catalog).forEach(k=>{const s=catalog[k],o=el('option',scope(s));o.value=k;$('catalog').append(o)});
+ $('direction').replaceChildren();directions.forEach(d=>{const o=el('option',d.title);o.value=d.id;$('direction').append(o)});promptPreview();
+ $('login').hidden=true;$('workspace').hidden=false;$('logout').hidden=false;
+ if(!route){const page=location.hash.slice(1),nav=[...document.querySelectorAll('nav button')].find(b=>b.dataset.page===page);if(nav)nav.click()}await refresh();
+}
+$('login-form').onsubmit=async e=>{e.preventDefault();try{await api('/auth/login','POST',{password:$('password').value});$('password').value='';notice('');detailFinished=false;await enter()}catch(e){notice(e.message)}};
+$('logout').onclick=async()=>{try{await api('/auth/logout','POST');locked()}catch(e){notice(e.message)}};
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{if(route){location.href='/#'+b.dataset.page;return}showPage(b.dataset.page,b.textContent);document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('selected',x===b))});
+$('day').value=new Date(Date.now()+8*3600000-86400000).toISOString().slice(0,10);
+$('direction').onchange=promptPreview;$('use-model').onchange=promptPreview;
+$('prompt-file').onchange=async e=>{try{const f=e.target.files[0];if(!f)return;if(!/\.(txt|md)$/i.test(f.name)||f.size>24000)throw Error('请导入24KB以内的 UTF-8 txt/md 文件');const text=new TextDecoder('utf-8',{fatal:true}).decode(await f.arrayBuffer());if(text.length>6000)throw Error('补充提示词不能超过6000字');$('guidance').value=text;notice('已导入补充提示词，请检查后提交。')}catch(e){notice(e.message)}finally{$('prompt-file').value=''}};
+$('collect-form').onsubmit=async e=>{e.preventDefault();const submit=e.submitter;submit.disabled=true;try{const name=$('catalog').value;if(submit.value==='plan')await api('/api/plans','POST',{name,catalog_id:name,enabled:true});else{const spec=catalog[name],context={};['market','country','store','device','category','chart'].forEach(k=>context[k]=spec[k]);context.data_date=$('day').value;await api('/api/jobs','POST',{request_key:crypto.randomUUID(),recipe:name,context})}notice('已保存，Mac 节点会领取任务。');await refresh()}catch(e){notice(e.message)}finally{submit.disabled=false}};
+$('research-form').onsubmit=async e=>{e.preventDefault();const submit=e.submitter;submit.disabled=true;try{const r=await api('/api/analyses','POST',{use_model:$('use-model').value==='1',country:$('country').value,store:'',direction:$('direction').value,guidance:$('guidance').value});location.href='/reports/'+r.id}catch(e){notice(e.message);submit.disabled=false}};
+$('review-form').onsubmit=async e=>{e.preventDefault();try{await api('/api/feedback/'+$('review-key').value,'PUT',{decision:$('decision').value,qualification:$('qualification').value,note:$('note').value,experiment:$('experiment').value,evidence_refs:$('evidence-refs').value.split('\n').map(x=>x.trim()).filter(Boolean)});$('review').close();detailFinished=false;await refresh();notice('审核记录已保存。')}catch(e){notice(e.message)}};
+$('close-review').onclick=()=>$('review').close();$('close-app-detail').onclick=()=>$('app-detail').close();
+enter().catch(e=>{locked();if(e.message!=='UNAUTHORIZED')notice(e.message)});
+setInterval(()=>{if(!$('workspace').hidden)refresh().catch(e=>notice(e.message))},5000);

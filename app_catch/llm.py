@@ -28,7 +28,8 @@ def validate_output(result, allowed):
     return result
 
 
-def research(evidence, endpoint, model, key, cache_dir, transport=None):
+def research(evidence, endpoint, model, key, cache_dir, transport=None, system_prompt=None):
+    system_prompt=system_prompt or SYSTEM
     url = urlsplit(endpoint)
     if url.scheme != 'https' or not url.hostname or url.username or url.password or url.query or url.fragment:
         raise ValueError('Explicit HTTPS model endpoint required')
@@ -46,7 +47,7 @@ def research(evidence, endpoint, model, key, cache_dir, transport=None):
     serialized = json.dumps(evidence, ensure_ascii=False)
     if len(serialized) > 40000:
         raise ValueError('INPUT_BUDGET_EXCEEDED')
-    cache = Path(cache_dir)/(digest({'endpoint':endpoint,'model':model,'prompt':SYSTEM,
+    cache = Path(cache_dir)/(digest({'endpoint':endpoint,'model':model,'prompt':system_prompt,
         'version':PROMPT_VERSION,'evidence':evidence})+'.json')
     if cache.exists():
         value = read_json(cache)
@@ -55,7 +56,7 @@ def research(evidence, endpoint, model, key, cache_dir, transport=None):
     # No automatic timeout retries: a request without a response may already be billed.
     body={'model':model,'temperature':0,'max_tokens':3000,
           'response_format':{'type':'json_object'},'messages':[
-              {'role':'system','content':SYSTEM},{'role':'user','content':serialized}]}
+              {'role':'system','content':system_prompt},{'role':'user','content':serialized}]}
     if url.hostname == 'dashscope.aliyuncs.com' and model == 'deepseek-v4-flash-0731':
         body['enable_thinking']=False
         body['max_completion_tokens']=body.pop('max_tokens')

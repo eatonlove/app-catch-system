@@ -207,6 +207,13 @@ def create_app(database_url=None, admin_token=None, worker_token=None, clock=tim
             raise HTTPException(404, 'RESULT_NOT_AVAILABLE')
         return row[0]
 
+    @app.get('/api/jobs/{identity}', dependencies=[Depends(admin)])
+    def job_detail(identity: str):
+        with queue.engine.connect() as con:
+            row=con.execute(select(jobs.c.id,jobs.c.payload,jobs.c.state,jobs.c.attempts,jobs.c.created_at,jobs.c.error_code).where(jobs.c.id==identity)).mappings().first()
+        if not row:raise HTTPException(404,'NOT_FOUND')
+        return dict(row)
+
     @app.post('/worker/claim', dependencies=[Depends(worker)])
     def claim():
         with queue.engine.begin() as con:
@@ -254,6 +261,9 @@ def create_app(database_url=None, admin_token=None, worker_token=None, clock=tim
         response.delete_cookie('ac_session');return {'ok':True}
     @app.get('/')
     def home(): return FileResponse(static/'index.html')
+    @app.get('/collections/{identity}')
+    @app.get('/reports/{identity}')
+    def detail_page(identity:str):return FileResponse(static/'index.html')
     @app.get('/assets/{name}')
     def asset(name:str):
         if name not in ('app.js','style.css'):raise HTTPException(404)
