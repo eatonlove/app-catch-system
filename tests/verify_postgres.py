@@ -37,7 +37,25 @@ def main():
         with queue.engine.connect() as c:assert c.execute(select(analyses.c.state).where(analyses.c.id=='analysis-test')).scalar()=='SUCCEEDED'
         assert queue.claim() is None
         assert all(r['state']=='SUCCEEDED' for r in queue.list_jobs())
-        print('PostgreSQL17: 10 concurrent claims unique, 10 bundles committed, no duplicate delivery.')
+        from app_catch.cloud import create_app
+        from fastapi.testclient import TestClient
+        app=create_app(url,'a'*40,'w'*40)
+        with TestClient(app) as client:
+            h={'Authorization':'Bearer '+'a'*40}
+            from datetime import date
+            ev=client.post('/api/evidence',headers=h,json=dict(title='PG integration evidence',claim_type='market',source='test',text='Test only',observed_at=date.today().isoformat(),country='US',store='appstore',rights='test')).json()['id']
+            op=client.post('/api/opportunities',headers=h,json=dict(title='Test opportunity',who='test',task='test',context='test',country='US',store='appstore',evidence_ids=[ev]))
+            assert op.status_code==200,op.text
+            snap=client.post('/api/score-runs',headers=h,json={'as_of':date.today().isoformat()})
+            assert snap.status_code==200,snap.text
+        dump=subprocess.check_output(['docker','exec',name,'pg_dump','-U','postgres','-d','appcatch_test','-Fc'])
+        assert len(dump)>1000
+        subprocess.run(['docker','exec',name,'createdb','-U','postgres','appcatch_restore'],check=True,capture_output=True)
+        subprocess.run(['docker','exec','-i',name,'pg_restore','-U','postgres','-d','appcatch_restore','--exit-on-error'],input=dump,check=True,capture_output=True)
+        restored=subprocess.check_output(['docker','exec',name,'psql','-U','postgres','-d','appcatch_restore','-Atc',"select count(*) from ac_lab_records where kind='score_run'"],text=True).strip()
+        assert restored=='1'
+        app.state.queue.engine.dispose()
+        print('PostgreSQL17: queue uniqueness, lab evidence/opportunity/snapshot persisted; pg_dump restored into separate disposable DB with complete score report.')
     finally:
         if queue:queue.engine.dispose()
         subprocess.run(['docker','rm','-f',name],capture_output=True)

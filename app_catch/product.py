@@ -31,6 +31,7 @@ class AnalysisInput(BaseModel):
     direction:str='comprehensive'
     guidance:str=Field(default='',max_length=6000)
     source_ids:Optional[list[str]]=Field(default=None,max_length=500)
+    evidence_record_ids:list[str]=Field(default_factory=list,max_length=100)
     evidence_limit:int=Field(default=30,ge=1,le=30)
 class FeedbackInput(BaseModel):
     decision:str=Field(pattern='^(watch|validate|reject|develop)$')
@@ -76,8 +77,17 @@ def build_report(bundles, filters=None):
             'unknowns':['收入、付费用户数未由排名推导','跨市场需求与替代品需验证','具体功能资质待人工核验']})
         evidence.append({'id':ev,'text':json.dumps({'name':name,'context':c,'rank':current,'windows':windows,'developer':row.get('developer'),'observed_days':len(days),'raw_columns':raw},ensure_ascii=False)[:2000]})
     candidates.sort(key=lambda x:(-(x['windows']['7']['rank_improvement'] or 0),-x['observed_days'],x['rank'] or 999999,x['key']))
+    for item in filters.get('supplemental_evidence',[]):
+        d=item['data'];ev='manual-'+item['id']+':evidence'
+        c={'market':'manual','country':d['country'],'store':d['store'],'device':'unspecified','category':d['claim_type'],'chart':'manual','data_date':d['observed_at']}
+        windows={str(n):{'rank_improvement':None,'baseline_date':None,'observed_days':0} for n in (7,28,90)}
+        candidates.append({'key':digest({'evidence':item['id']}),'name':d['title'],'task':d['claim_type'],'context':c,'rank':None,'windows':windows,'observed_days':1,'evidence_ids':[ev],'source_url':d['source_url'] or '/#data-lab','developer':None,'qualification':'UNREVIEWED','unknowns':['补充证据的适用范围需人工复核'],'manual_evidence_id':item['id']})
+        evidence.append({'id':ev,'text':json.dumps({'name':d['title'],'context':c,'evidence':d,'type':'supplemental'},ensure_ascii=False)})
+        sources.append({'id':'manual-'+item['id'],'context':c,'row_count':1,'status':'REGISTERED','evidence_id':item['id']})
     evidence_by_id={item['id']:item for item in evidence}
-    selected=candidates[:200]
+    manual=[c for c in candidates if c.get('manual_evidence_id')]
+    selected=manual+candidates[:max(0,200-len(manual))]
+    selected=list({c['key']:c for c in selected}.values())
     selected_ids=list(dict.fromkeys(ref for item in selected for ref in item['evidence_ids']))
     report={'kind':'research_priority_not_profit_prediction','generated_at':time.time(),'candidates':selected,
             'total_candidates':len(candidates),'evidence':[evidence_by_id[ref] for ref in selected_ids],
@@ -133,7 +143,15 @@ def register(app,queue,admin):
         allowed={r['id'] for r in rows if r['state']=='SUCCEEDED' and r['bundle'] and all(not getattr(value,k) or getattr(value,k)==r['payload']['context'][k] for k in ('country','store'))}
         ids=list(dict.fromkeys(value.source_ids)) if value.source_ids is not None else sorted(allowed)
         if set(ids)-allowed:raise HTTPException(422,'所选批次不存在、未完整采集或与地区筛选不一致')
-        filters={'country':value.country,'store':value.store,'source_ids':ids,'evidence_limit':value.evidence_limit}
+        from .lab import records
+        supplemental=[]
+        with queue.engine.connect() as con:
+            for eid in dict.fromkeys(value.evidence_record_ids):
+                row=con.execute(select(records).where(records.c.id==eid,records.c.kind=='evidence')).mappings().first()
+                if not row:raise HTTPException(422,'补充证据不存在')
+                if any(getattr(value,k) and getattr(value,k)!=row['data'][k] for k in ('country','store')):raise HTTPException(422,'补充证据与市场筛选不一致')
+                supplemental.append(dict(row))
+        filters={'country':value.country,'store':value.store,'source_ids':ids,'evidence_limit':value.evidence_limit,'supplemental_evidence':supplemental,'evidence_record_ids':value.evidence_record_ids}
         report=build_report([(r['id'],r['bundle']) for r in rows if r['id'] in ids],filters)
         selected=choose_evidence(report,value.evidence_limit) if value.use_model else []
         return filters,overview(report,selected,report['source_overview']['sources'])
@@ -175,7 +193,7 @@ def register(app,queue,admin):
         except ValueError:raise HTTPException(422,'UNKNOWN_RESEARCH_DIRECTION')
         if value.use_model and not all(os.getenv(k) for k in ['AC_LLM_ENDPOINT','AC_LLM_MODEL','AC_LLM_API_KEY']):raise HTTPException(409,'MODEL_CONFIG_REQUIRED')
         filters,scope=prepare(value)
-        if value.source_ids is not None and not filters['source_ids']:raise HTTPException(422,'请至少选择一个已完整采集的批次')
+        if value.source_ids is not None and not filters['source_ids'] and not value.evidence_record_ids:raise HTTPException(422,'请至少选择一个已完整采集的批次')
         filters.update(direction=value.direction,prompt_snapshot=prompt if value.use_model else None,source_preview=scope)
         identity=str(uuid.uuid4())
         with queue.engine.begin() as c:c.execute(analyses.insert().values(id=identity,state='PENDING',requested_at=time.time(),use_model=int(value.use_model),filters=filters))

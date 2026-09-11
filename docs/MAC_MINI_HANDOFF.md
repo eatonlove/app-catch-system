@@ -59,3 +59,7 @@ bash deploy/mac/start.sh
 ## 当前验收边界
 
 开发机已核验可见 DOM、iOS 前100名、云端 API/队列与 Web 流程。Mac mini 专用 Python 浏览器会话的端到端采集正是本交接要完成的最后现场验收；不能把开发机的 DOM 观察当作已在此设备执行成功。
+
+## 2026-09-11 v4同步说明
+
+云端新增机会池、证据/规则/实验工作台与CSV/JSON导入，节点协议仍为1，现有Mac采集器无需重新登录或更换令牌。Mac上的Codex执行时先确认仓库无未提交改动，运行 `git pull --ff-only origin main`，按本文既有doctor/start流程检查；不得覆盖worker.env或浏览器登录目录。未完成的Google Play/鸿蒙榜单需核验真实结束条件再补采，不能把PARTIAL直接改成功。新增数据/权限需求见docs/未来待补充能力与数据.md。

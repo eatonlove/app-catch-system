@@ -40,8 +40,8 @@ class ResearchViews(unittest.TestCase):
  def test_bad_direction_and_oversized_guidance(self):
   self.assertEqual(self.c.post('/api/analyses',headers=self.h,json={'direction':'invented'}).status_code,422)
   self.assertEqual(self.c.post('/api/analyses',headers=self.h,json={'guidance':'x'*6001}).status_code,422)
-  d=self.c.get('/api/research-directions',headers=self.h).json();self.assertEqual(len(d),7)
-  self.assertEqual(len({x['prompt'] for x in d}),7)
+  d=self.c.get('/api/research-directions',headers=self.h).json();self.assertEqual(len(d),13)
+  self.assertEqual(len({x['prompt'] for x in d}),13)
  def test_prompt_separates_cache(self):
   calls=[]
   def transport(req):calls.append(json.loads(req.content));return httpx.Response(200,json={'choices':[{'message':{'content':'{"candidates":[]}'}}]})

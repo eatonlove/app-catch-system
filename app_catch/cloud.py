@@ -266,8 +266,10 @@ def create_app(database_url=None, admin_token=None, worker_token=None, clock=tim
     def detail_page(identity:str):return FileResponse(static/'index.html')
     @app.get('/assets/{name}')
     def asset(name:str):
-        if name not in ('app.js','style.css'):raise HTTPException(404)
+        if name not in ('app.js','lab.js','style.css'):raise HTTPException(404)
         return FileResponse(static/name)
     from .product import register
     register(app,queue,admin)
+    from .lab import register as register_lab
+    register_lab(app,queue,admin)
     return app
