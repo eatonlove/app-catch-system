@@ -103,6 +103,20 @@ class CloudTests(unittest.TestCase):
         self.assertEqual(r.status_code,413)
 
 class ModelTests(unittest.TestCase):
+    def test_dashscope_deepseek_request(self):
+        import json
+        def handler(req):
+            body=json.loads(req.content)
+            self.assertEqual(str(req.url),'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions')
+            self.assertFalse(body['enable_thinking'])
+            self.assertEqual(body['max_completion_tokens'],3000)
+            self.assertNotIn('max_tokens',body)
+            return httpx.Response(200,json={'choices':[{'message':{'content':'{"candidates":[]}'}}]})
+        with tempfile.TemporaryDirectory() as temp:
+            args=([{'id':'e1','text':'TEST ONLY'}],'https://dashscope.aliyuncs.com/compatible-mode/v1','deepseek-v4-flash-0731')
+            research(*args,'test-key',temp,transport=httpx.MockTransport(handler))
+            with self.assertRaisesRegex(ValueError,'STANDARD_PAY_AS_YOU_GO'):
+                research(*args,'sk-sp-test',temp,transport=httpx.MockTransport(handler))
     def test_unknown_evidence_rejected(self):
         with self.assertRaises(ValueError):
             validate_output({'candidates':[{'task':'t','hypothesis':'h','evidence_ids':['fake'],'unknowns':['u']}]},{'real'})

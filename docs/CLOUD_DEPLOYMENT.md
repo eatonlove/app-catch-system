@@ -51,3 +51,9 @@ bash deploy/cloud/backup.sh /安全备份目录
 版本回退：保留升级前数据库备份，checkout 已验收提交，再执行 release.sh；若有 schema 变更先按对应迁移说明处理。本项目脚本不删除卷，不执行全局 Docker 清理。当前未实现自动备份调度、告警推送与数据归档；这些需要结合实际容量和运维渠道配置。
 
 生产部署仍需真实域名/TLS、可用服务器目录和端口、模型配置。交付时仅进行了本地容器与临时数据库验证，尚未对现有腾讯云服务作修改。
+
+## 本次确认配置（2026-09-11）
+
+域名 `catch.meidaquan.com`；模型 `deepseek-v4-flash-0731`；Base URL `https://dashscope.aliyuncs.com/compatible-mode/v1`。按量计费标准 Key 单独配置。该模型默认开启思考，本系统显式关闭思考，使用 JSON Object 与完整输出3000 token上限；不自动切换其他模型。
+
+核验来源：[模型页](https://www.qianwenai.com/models/deepseek-v4-flash-0731)、[思考模式](https://platform.qianwenai.com/docs/developer-guides/text-generation/thinking)。
