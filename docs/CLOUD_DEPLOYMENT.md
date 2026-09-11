@@ -57,3 +57,5 @@ bash deploy/cloud/backup.sh /安全备份目录
 域名 `catch.meidaquan.com`；模型 `deepseek-v4-flash-0731`；Base URL `https://dashscope.aliyuncs.com/compatible-mode/v1`。按量计费标准 Key 单独配置。该模型默认开启思考，本系统显式关闭思考，使用 JSON Object 与完整输出3000 token上限；不自动切换其他模型。
 
 核验来源：[模型页](https://www.qianwenai.com/models/deepseek-v4-flash-0731)、[思考模式](https://platform.qianwenai.com/docs/developer-guides/text-generation/thinking)。
+
+构建下载受限时，可在 production.env 设置 `AC_PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/`。该参数仅作用于本项目镜像构建，不修改宿主 pip 配置；保持 HTTPS 校验。默认仍为官方 PyPI。依据：[阿里云 PyPI 镜像说明](https://developer.aliyun.com/mirror/pypi)。

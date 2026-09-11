@@ -2,6 +2,7 @@ FROM python:3.12-slim
 WORKDIR /app
 COPY pyproject.toml ./
 COPY app_catch ./app_catch
+ARG PIP_INDEX_URL=https://pypi.org/simple
 RUN pip install --no-cache-dir '.[cloud]' && useradd --uid 10001 --create-home appcatch && mkdir -p /tmp/model-cache && chown 10001:10001 /tmp/model-cache
 USER 10001
 EXPOSE 8080

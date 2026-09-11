@@ -20,6 +20,8 @@ services:
     build:
       context: ../..
       dockerfile: deploy/cloud/Dockerfile
+      args:
+        PIP_INDEX_URL: ${AC_PIP_INDEX_URL:-https://pypi.org/simple}
     environment:
       AC_ENV: production
       AC_DATABASE_URL: ${AC_DATABASE_URL:?Set dedicated PostgreSQL psycopg URL}
@@ -47,6 +49,8 @@ services:
     build:
       context: ../..
       dockerfile: deploy/cloud/Dockerfile
+      args:
+        PIP_INDEX_URL: ${AC_PIP_INDEX_URL:-https://pypi.org/simple}
     command: [python, -m, app_catch.analysis_worker]
     environment:
       AC_DATABASE_URL: ${AC_DATABASE_URL:?Set database URL}
