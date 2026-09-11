@@ -1,0 +1,70 @@
+name: appcatch
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: appcatch
+      POSTGRES_USER: appcatch
+      POSTGRES_PASSWORD: ${AC_DB_PASSWORD:?Set a dedicated database password}
+    volumes:
+      - appcatch-db:/var/lib/postgresql/data
+    networks: [private]
+    mem_limit: 512m
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U appcatch -d appcatch']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/cloud/Dockerfile
+    environment:
+      AC_ENV: production
+      AC_DATABASE_URL: ${AC_DATABASE_URL:?Set dedicated PostgreSQL psycopg URL}
+      AC_ADMIN_TOKEN: ${AC_ADMIN_TOKEN:?Set random admin token}
+      AC_WORKER_TOKEN: ${AC_WORKER_TOKEN:?Set distinct worker token}
+      AC_ADMIN_PASSWORD: ${AC_ADMIN_PASSWORD:?Set administrator password}
+      AC_LLM_ENDPOINT: ${AC_LLM_ENDPOINT:-}
+      AC_LLM_MODEL: ${AC_LLM_MODEL:-}
+      AC_LLM_API_KEY: ${AC_LLM_API_KEY:-}
+      AC_MODEL_DAILY_LIMIT: ${AC_MODEL_DAILY_LIMIT:-10}
+      AC_RELEASE: ${AC_RELEASE:-unreleased}
+    ports:
+      - '127.0.0.1:${AC_HOST_PORT:?Choose and verify unused port}:8080'
+    networks: [private]
+    mem_limit: 512m
+    restart: unless-stopped
+    depends_on:
+      db: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8080/healthz", timeout=3)']
+      interval: 20s
+      timeout: 5s
+      retries: 5
+  analyst:
+    build:
+      context: ../..
+      dockerfile: deploy/cloud/Dockerfile
+    command: [python, -m, app_catch.analysis_worker]
+    environment:
+      AC_DATABASE_URL: ${AC_DATABASE_URL:?Set database URL}
+      AC_LLM_ENDPOINT: ${AC_LLM_ENDPOINT:-}
+      AC_LLM_MODEL: ${AC_LLM_MODEL:-}
+      AC_LLM_API_KEY: ${AC_LLM_API_KEY:-}
+      AC_MODEL_DAILY_LIMIT: ${AC_MODEL_DAILY_LIMIT:-10}
+      AC_MODEL_CACHE: /tmp/model-cache
+    volumes:
+      - model-cache:/tmp/model-cache
+    networks: [private]
+    mem_limit: 512m
+    restart: unless-stopped
+    depends_on:
+      api: {condition: service_healthy}
+
+volumes:
+  appcatch-db:
+  model-cache:
+networks:
+  private:

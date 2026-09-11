@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "app-catch-system"
+version = "0.1.0"
+description = "Evidence-first app chart collection and analysis"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+cloud = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1", "sqlalchemy>=2.0,<2.1", "psycopg[binary]>=3.2,<4", "httpx>=0.27,<1"]
+browser = ["playwright>=1.40,<2"]
+
+[project.scripts]
+app-catch = "app_catch.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["app_catch*"]
+
+[tool.setuptools.package-data]
+app_catch = ["static/*"]

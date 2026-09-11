@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "verified": false,
+  "verification_evidence": null,
+  "start_url": "https://app.diandian.com/",
+  "scope_selector": null,
+  "ready_selector": null,
+  "rows_selector": null,
+  "auth_selectors": [],
+  "context_guards": [],
+  "steps": [],
+  "fields": {},
+  "metrics": [],
+  "end_selector": null,
+  "next_selector": null,
+  "scroll_selector": null,
+  "expected_count": null,
+  "max_pages": 20,
+  "max_rows": 500,
+  "settle_ms": 1200,
+  "screenshot": true,
+  "detail": {
+    "enabled": false,
+    "limit": 10,
+    "ready_selector": null,
+    "scope_selector": null,
+    "steps": [],
+    "fields": {}
+  },
+  "note": "UNVERIFIED: Chrome control service unavailable. Fill only after inspecting the actual page.",
+  "name": "android-cn"
+}

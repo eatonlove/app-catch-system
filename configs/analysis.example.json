@@ -1,0 +1,22 @@
+{
+  "market": "appstore",
+  "country": "US",
+  "store": "appstore",
+  "device": "iphone",
+  "category": "工具",
+  "chart": "grossing",
+  "metric": "revenue",
+  "currency": "USD",
+  "basis": "net",
+  "scope": "iap",
+  "as_of": "2026-09-11",
+  "windows": [
+    7,
+    28,
+    90
+  ],
+  "sort_window": 28,
+  "baseline_floor": 100,
+  "limit": 100,
+  "note": "Example only. Revenue basis/scope must be verified from actual pages."
+}

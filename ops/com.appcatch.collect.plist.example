@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.appcatch.collect</string>
+  <key>ProgramArguments</key><array>
+    <string>REPLACE_ABSOLUTE_VENV_PYTHON</string>
+    <string>-m</string><string>app_catch</string>
+    <string>run-plan</string><string>--plan</string><string>configs/plan.json</string>
+  </array>
+  <key>WorkingDirectory</key><string>REPLACE_ABSOLUTE_PROJECT</string>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+  <key>StandardOutPath</key><string>REPLACE_ABSOLUTE_EXISTING_LOG_DIRECTORY/collector.log</string>
+  <key>StandardErrorPath</key><string>REPLACE_ABSOLUTE_EXISTING_LOG_DIRECTORY/collector-error.log</string>
+  <key>ProcessType</key><string>Background</string>
+</dict></plist>

@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "note": "All jobs disabled until real selectors, context guards, account and data-date coverage are verified. No global country aggregation.",
+  "jobs": [
+    {
+      "name": "appstore-us",
+      "enabled": false,
+      "recipe": "recipes/appstore-us.json",
+      "context": {
+        "market": "appstore",
+        "country": "US",
+        "store": "appstore",
+        "device": "iphone",
+        "category": "工具",
+        "chart": "grossing",
+        "data_date": "2026-09-11"
+      },
+      "lag_days": 1
+    },
+    {
+      "name": "googleplay-us",
+      "enabled": false,
+      "recipe": "recipes/googleplay-us.json",
+      "context": {
+        "market": "googleplay",
+        "country": "US",
+        "store": "googleplay",
+        "device": "android",
+        "category": "tools",
+        "chart": "grossing",
+        "data_date": "2026-09-11"
+      },
+      "lag_days": 1
+    },
+    {
+      "name": "android-cn",
+      "enabled": false,
+      "recipe": "recipes/android-cn.json",
+      "context": {
+        "market": "android_cn",
+        "country": "CN",
+        "store": "REPLACE_WITH_OBSERVED_STORE",
+        "device": "android",
+        "category": "工具",
+        "chart": "free",
+        "data_date": "2026-09-11"
+      },
+      "lag_days": 1
+    }
+  ]
+}

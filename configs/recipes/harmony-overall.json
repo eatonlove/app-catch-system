@@ -1,0 +1,6 @@
+{
+  "adapter": "diandian-table-v1",
+  "catalog_id": "harmony-overall",
+  "top_k": 100,
+  "evidence": "docs/DOM接入记录.md"
+}

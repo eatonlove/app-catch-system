@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.egg-info/
+data/
+work/
+outputs/
+*.sqlite*
+.env*
+.DS_Store
+
+**/production.env
+**/worker.env
