@@ -29,7 +29,7 @@ async function refresh(){
  }finally{refreshing=false}
 }
 async function refreshLater(){refreshing=false;await refresh()}
-function promptPreview(){const d=directions.find(x=>x.id===$('direction').value);if(!d)return;$('direction-description').textContent=d.description;$('prompt-preview').textContent=d.full_prompt;$('prompt-controls').hidden=$('use-model').value!=='1';$('direction').disabled=$('use-model').value!=='1'}
+function promptPreview(){const d=directions.find(x=>x.id===$('direction').value);$('direction').disabled=false;$('prompt-controls').hidden=$('use-model').value!=='1';if(!d)return;$('direction-description').textContent=d.description;$('prompt-preview').textContent=d.full_prompt}
 async function renderDetail(){
  showPage('detail-page',route[1]==='collections'?'采集数据详情':'完整研究报告');
  if(route[1]==='collections')await collectionDetail(route[2]);else await reportDetail(route[2]);
@@ -78,7 +78,7 @@ async function reportDetail(id){
 function review(c){const n=notes[c.key]||{};$('review-key').value=c.key;$('decision').value=n.decision||'watch';$('qualification').value=n.qualification||'UNREVIEWED';$('note').value=n.note||'';$('experiment').value=n.experiment||'';$('evidence-refs').value=(n.evidence_refs||[]).join('\n');$('review').showModal()}
 async function enter(){
  [catalog,directions]=await Promise.all([api('/api/catalog'),api('/api/research-directions')]);$('catalog').replaceChildren();Object.keys(catalog).forEach(k=>{const s=catalog[k],o=el('option',scope(s));o.value=k;$('catalog').append(o)});
- $('direction').replaceChildren();directions.forEach(d=>{const o=el('option',d.title);o.value=d.id;$('direction').append(o)});promptPreview();
+ $('direction').replaceChildren();const placeholder=el('option','选择方向，启用 AI 分析');placeholder.value='';$('direction').append(placeholder);directions.forEach(d=>{const o=el('option',d.title);o.value=d.id;$('direction').append(o)});promptPreview();
  $('login').hidden=true;$('workspace').hidden=false;$('logout').hidden=false;
  if(!route){const page=location.hash.slice(1),nav=[...document.querySelectorAll('nav button')].find(b=>b.dataset.page===page);if(nav)nav.click()}await refresh();
 }
@@ -86,10 +86,10 @@ $('login-form').onsubmit=async e=>{e.preventDefault();try{await api('/auth/login
 $('logout').onclick=async()=>{try{await api('/auth/logout','POST');locked()}catch(e){notice(e.message)}};
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{if(route){location.href='/#'+b.dataset.page;return}showPage(b.dataset.page,b.textContent);document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('selected',x===b))});
 $('day').value=new Date(Date.now()+8*3600000-86400000).toISOString().slice(0,10);
-$('direction').onchange=promptPreview;$('use-model').onchange=promptPreview;
+$('direction').onchange=()=>{$('use-model').value=$('direction').value?'1':'0';promptPreview();notice($('direction').value?'已启用 AI 分析；生成报告时将调用模型。':'已切换为无模型费用的趋势分析。')};$('use-model').onchange=()=>{if($('use-model').value==='1'&&!$('direction').value)$('direction').value='comprehensive';if($('use-model').value==='0')$('direction').value='';promptPreview()};
 $('prompt-file').onchange=async e=>{try{const f=e.target.files[0];if(!f)return;if(!/\.(txt|md)$/i.test(f.name)||f.size>24000)throw Error('请导入24KB以内的 UTF-8 txt/md 文件');const text=new TextDecoder('utf-8',{fatal:true}).decode(await f.arrayBuffer());if(text.length>6000)throw Error('补充提示词不能超过6000字');$('guidance').value=text;notice('已导入补充提示词，请检查后提交。')}catch(e){notice(e.message)}finally{$('prompt-file').value=''}};
 $('collect-form').onsubmit=async e=>{e.preventDefault();const submit=e.submitter;submit.disabled=true;try{const name=$('catalog').value;if(submit.value==='plan')await api('/api/plans','POST',{name,catalog_id:name,enabled:true});else{const spec=catalog[name],context={};['market','country','store','device','category','chart'].forEach(k=>context[k]=spec[k]);context.data_date=$('day').value;await api('/api/jobs','POST',{request_key:crypto.randomUUID(),recipe:name,context})}notice('已保存，Mac 节点会领取任务。');await refresh()}catch(e){notice(e.message)}finally{submit.disabled=false}};
-$('research-form').onsubmit=async e=>{e.preventDefault();const submit=e.submitter;submit.disabled=true;try{const r=await api('/api/analyses','POST',{use_model:$('use-model').value==='1',country:$('country').value,store:'',direction:$('direction').value,guidance:$('guidance').value});location.href='/reports/'+r.id}catch(e){notice(e.message);submit.disabled=false}};
+$('research-form').onsubmit=async e=>{e.preventDefault();const submit=e.submitter;submit.disabled=true;try{const r=await api('/api/analyses','POST',{use_model:$('use-model').value==='1',country:$('country').value,store:'',direction:$('direction').value||'comprehensive',guidance:$('guidance').value});location.href='/reports/'+r.id}catch(e){notice(e.message);submit.disabled=false}};
 $('review-form').onsubmit=async e=>{e.preventDefault();try{await api('/api/feedback/'+$('review-key').value,'PUT',{decision:$('decision').value,qualification:$('qualification').value,note:$('note').value,experiment:$('experiment').value,evidence_refs:$('evidence-refs').value.split('\n').map(x=>x.trim()).filter(Boolean)});$('review').close();detailFinished=false;await refresh();notice('审核记录已保存。')}catch(e){notice(e.message)}};
 $('close-review').onclick=()=>$('review').close();$('close-app-detail').onclick=()=>$('app-detail').close();
 enter().catch(e=>{locked();if(e.message!=='UNAUTHORIZED')notice(e.message)});
