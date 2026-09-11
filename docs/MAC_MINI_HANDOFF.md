@@ -6,7 +6,7 @@
 
 仓库：<https://github.com/eatonlove/app-catch-system>（私有）。先确认 GitHub 有读取权限。
 
-需要从云端管理员获得：本系统 HTTPS origin、专属 AC_WORKER_TOKEN。不要要求用户把 token 发到聊天；指导写入本机未跟踪 env。无需数据库密码、模型 Key 或管理员密码。云端未部署时先完成依赖安装与官方登录，等待 origin 后再启动节点，不能使用示例域名试跑。
+云端已部署，HTTPS origin 为 https://catch.meidaquan.com。需要从云端管理员安全取得专属 AC_WORKER_TOKEN（本机已生成 MacMini节点配置.env 私密交付文件）。不要要求用户把 token 发到聊天；指导写入本机未跟踪 env。无需数据库密码、模型 Key 或管理员密码。云端未部署时先完成依赖安装与官方登录，等待 origin 后再启动节点，不能使用示例域名试跑。
 
 ## 执行步骤
 
